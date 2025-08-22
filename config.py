@@ -22,11 +22,11 @@ class ConfigurationError(Exception):
 class ScraperConfig:
     """Configuration for web scraping operations."""
     base_url: str = "https://www.garagegrowngear.com/collections/sale-1"
-    max_retries: int = 5  # Increased retries for anti-bot detection
-    retry_delay: float = 2.0  # Longer base delay
-    request_timeout: int = 45  # Longer timeout for slow responses
+    max_retries: int = 6  # More retries for sophisticated blocking
+    retry_delay: float = 5.0  # Much longer base delay
+    request_timeout: int = 60  # Longer timeout for complex responses
     use_stealth_mode: bool = True
-    delay_between_requests: float = 3.0  # Longer delays between requests
+    delay_between_requests: float = 8.0  # Much longer delays between requests
     user_agent: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
     
     def __post_init__(self):

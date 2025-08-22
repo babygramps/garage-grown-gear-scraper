@@ -67,24 +67,197 @@ class GarageGrownGearScraper:
         self.performance_monitor = PerformanceMonitor() if enable_performance_monitoring else None
         self.batch_processor = BatchProcessor(batch_size=batch_size)
         
-        # Initialize Scrapling Fetcher with enhanced stealth configuration
+        # Initialize Scrapling Fetcher with maximum stealth configuration
         self.fetcher = Fetcher()
         
-        # Configure Fetcher with proper settings for Scrapling 0.2.99
+        # Configure Fetcher for maximum stealth
         try:
             self.fetcher.configure(
-                auto_match=True
+                auto_match=True,
+                stealth=True  # Try stealth again
             )
         except Exception as e:
-            self.logger.warning(f"Could not configure fetcher settings: {e}")
-            # Fallback to basic configuration
-            self.fetcher = Fetcher()
+            # If stealth parameter fails, try other configurations
+            try:
+                self.fetcher.configure(auto_match=True)
+                self.logger.info("Configured fetcher with basic auto_match")
+            except Exception as e2:
+                self.logger.warning(f"Could not configure fetcher: {e2}")
+                self.fetcher = Fetcher()
+        
+        # Initialize session tracking
+        self.session_established = False
+        self.request_count = 0
     
-    def _simulate_human_behavior(self) -> None:
-        """Add small random delays to simulate human browsing behavior."""
+    def _simulate_human_behavior(self, base_delay: float = 1.0, jitter_factor: float = 0.5) -> None:
+        """Add sophisticated random delays with jitter to simulate human browsing behavior."""
         import random
-        delay = random.uniform(0.5, 2.0)
-        time.sleep(delay)
+        
+        # Add jitter based on request count (humans slow down over time)
+        fatigue_factor = min(1.0 + (self.request_count * 0.1), 3.0)
+        
+        # Create irregular timing patterns
+        if random.random() < 0.3:  # 30% chance for longer pause (reading content)
+            delay = random.uniform(2.0, 8.0) * fatigue_factor
+        elif random.random() < 0.2:  # 20% chance for very quick action
+            delay = random.uniform(0.1, 0.5)
+        else:  # Normal browsing delay
+            delay = random.uniform(base_delay * 0.5, base_delay * 1.5) * fatigue_factor
+        
+        # Add micro-jitter to make timing even more irregular
+        jitter = random.uniform(-jitter_factor, jitter_factor)
+        final_delay = max(0.1, delay + jitter)
+        
+        self.logger.debug(f"Human behavior simulation: sleeping {final_delay:.2f} seconds")
+        time.sleep(final_delay)
+    
+    def _get_rotating_headers(self) -> Dict[str, str]:
+        """Generate rotating headers with browser fingerprint variations."""
+        import random
+        
+        # Rotate between different browser versions and platforms
+        user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/119.0'
+        ]
+        
+        platforms = ['Win32', 'MacIntel', 'Linux x86_64']
+        chrome_versions = ['"Google Chrome";v="119"', '"Google Chrome";v="118"', '"Chromium";v="119"']
+        
+        selected_ua = random.choice(user_agents)
+        selected_platform = random.choice(platforms)
+        selected_chrome = random.choice(chrome_versions)
+        
+        # Base headers with some variation
+        headers = {
+            'User-Agent': selected_ua,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': random.choice(['en-US,en;q=0.9', 'en-GB,en;q=0.9', 'en-US,en;q=0.8']),
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': random.choice(['none', 'same-origin', 'cross-site']),
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': random.choice(['max-age=0', 'no-cache']),
+            'sec-ch-ua': f'{selected_chrome}, "Not?A_Brand";v="24"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': f'"{selected_platform}"'
+        }
+        
+        # Sometimes omit certain headers to look more natural
+        if random.random() < 0.3:
+            headers.pop('DNT', None)
+        if random.random() < 0.2:
+            headers.pop('sec-ch-ua', None)
+        
+        return headers
+    
+    def _try_playwright_browser(self, url: str) -> Optional[Adaptor]:
+        """
+        Fallback method using Playwright for real browser automation.
+        This is used when HTTP requests are consistently blocked.
+        """
+        try:
+            # Try to import Playwright automation
+            try:
+                from scrapling.engines.playwright import PlaywrightFetcher
+                browser_fetcher = PlaywrightFetcher()
+            except ImportError:
+                # Fallback to regular Playwright if available
+                from playwright.sync_api import sync_playwright
+                self.logger.info(f"Using direct Playwright for {url}")
+                return self._use_direct_playwright(url)
+            
+            self.logger.info(f"Attempting browser automation for {url}")
+            
+            # Initialize Playwright fetcher with maximum stealth
+            
+            # Configure for stealth
+            browser_config = {
+                'headless': True,
+                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+                'viewport': {'width': 1920, 'height': 1080},
+                'java_script_enabled': True,
+                'locale': 'en-US'
+            }
+            
+            # Navigate with realistic delays
+            response = browser_fetcher.get(url, **browser_config)
+            
+            # Add realistic interaction delays
+            import random
+            time.sleep(random.uniform(2.0, 5.0))
+            
+            if response and response.status == 200:
+                self.logger.info("Browser automation successful")
+                return response
+            else:
+                self.logger.warning(f"Browser automation failed: {response.status if response else 'No response'}")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Browser automation error: {str(e)}")
+            return None
+    
+    def _use_direct_playwright(self, url: str) -> Optional[Adaptor]:
+        """Use direct Playwright browser automation."""
+        try:
+            from playwright.sync_api import sync_playwright
+            
+            with sync_playwright() as p:
+                # Launch browser with stealth options
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=[
+                        '--no-sandbox',
+                        '--disable-blink-features=AutomationControlled',
+                        '--disable-features=VizDisplayCompositor',
+                        '--disable-web-security',
+                        '--disable-dev-shm-usage',
+                        '--no-first-run',
+                        '--disable-extensions',
+                        '--disable-default-apps',
+                        '--disable-background-timer-throttling',
+                        '--disable-backgrounding-occluded-windows',
+                        '--disable-renderer-backgrounding'
+                    ]
+                )
+                
+                context = browser.new_context(
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+                    viewport={'width': 1920, 'height': 1080},
+                    locale='en-US'
+                )
+                
+                page = context.new_page()
+                
+                # Navigate to URL
+                response = page.goto(url, wait_until='networkidle', timeout=60000)
+                
+                if response and response.status == 200:
+                    # Get page content
+                    content = page.content()
+                    browser.close()
+                    
+                    # Create Adaptor-like object with the content
+                    from scrapling.parser import Adaptor
+                    adaptor = Adaptor(content)
+                    adaptor.status = 200
+                    return adaptor
+                else:
+                    browser.close()
+                    return None
+                    
+        except Exception as e:
+            self.logger.error(f"Direct Playwright error: {str(e)}")
+            return None
     
     def _establish_session(self) -> bool:
         """
@@ -111,6 +284,7 @@ class GarageGrownGearScraper:
             
             if response.status == 200:
                 self.logger.info("Successfully established session")
+                self.session_established = True
                 # Wait a bit to simulate reading the page
                 import random
                 time.sleep(random.uniform(1.0, 3.0))
@@ -125,8 +299,8 @@ class GarageGrownGearScraper:
         
     def _make_request(self, url: str) -> Optional[Adaptor]:
         """
-        Make a request with retry logic, stealth headers, and performance monitoring.
-        Enhanced with better anti-detection measures.
+        Make a request with sophisticated anti-detection measures.
+        Enhanced with header rotation, jitter, and advanced evasion.
         
         Args:
             url: URL to fetch
@@ -135,40 +309,42 @@ class GarageGrownGearScraper:
             Adaptor object with parsed HTML or None if failed
         """
         request_id = f"request_{int(time.time() * 1000)}"
+        self.request_count += 1
         
-        # Enhanced headers to look more like a real browser
-        enhanced_headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-            'Cache-Control': 'max-age=0',
-            'sec-ch-ua': '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"'
-        }
+        # Use rotating headers for each request
+        enhanced_headers = self._get_rotating_headers()
         
         for attempt in range(self.max_retries):
             try:
-                self.logger.info(f"Fetching URL: {url} (attempt {attempt + 1})")
+                self.logger.info(f"Fetching URL: {url} (attempt {attempt + 1}, request #{self.request_count})")
                 
-                # Add small delay to simulate human behavior
+                # Add sophisticated delay with jitter before each request
                 if attempt > 0:
-                    self._simulate_human_behavior()
-                
-                # Add referrer to look more natural (simulate coming from Google search)
-                if attempt == 0:
-                    enhanced_headers['Referer'] = 'https://www.google.com/search?q=garage+grown+gear'
+                    # Longer delays for retries
+                    self._simulate_human_behavior(base_delay=3.0, jitter_factor=1.0)
                 else:
-                    # On retries, use the site's homepage as referrer
+                    # Normal browsing delay
+                    self._simulate_human_behavior(base_delay=1.5, jitter_factor=0.7)
+                
+                # Smart referrer management
+                if self.request_count == 1:
+                    # First request - simulate coming from Google
+                    enhanced_headers['Referer'] = 'https://www.google.com/search?q=garage+grown+gear+sale'
+                elif self.request_count == 2:
+                    # Second request - from Google to homepage
+                    enhanced_headers['Referer'] = 'https://www.google.com/'
+                elif self.session_established:
+                    # Subsequent requests - from within the site
                     enhanced_headers['Referer'] = 'https://www.garagegrowngear.com/'
+                else:
+                    # Mix of referrers to look natural
+                    import random
+                    referrers = [
+                        'https://www.google.com/search?q=garage+grown+gear',
+                        'https://www.garagegrowngear.com/',
+                        'https://www.google.com/',
+                    ]
+                    enhanced_headers['Referer'] = random.choice(referrers)
                 
                 # Use performance monitoring for request timing
                 if self.performance_monitor:
@@ -221,6 +397,12 @@ class GarageGrownGearScraper:
                 time.sleep(wait_time)
             else:
                 self.logger.error(f"Max retries exceeded for {url}")
+        
+        # If all HTTP requests failed, try browser automation as last resort
+        self.logger.warning("All HTTP requests failed, attempting browser automation...")
+        browser_response = self._try_playwright_browser(url)
+        if browser_response:
+            return browser_response
                     
         return None
     
@@ -499,24 +681,49 @@ class GarageGrownGearScraper:
         if not self._establish_session():
             self.logger.warning("Failed to establish session, proceeding anyway...")
         
-        # Try main URL first, then fallbacks if it fails
+        # Try a more gradual approach - start with less suspicious requests
+        gradual_urls = [
+            "https://www.garagegrowngear.com",  # Homepage first
+            "https://www.garagegrowngear.com/collections",  # Collections overview
+            self.base_url  # Main target
+        ] + self.fallback_urls
+        
         primary_success = False
-        for attempt_url in [self.base_url] + self.fallback_urls:
-            self.logger.info(f"Attempting to scrape from: {attempt_url}")
+        working_url = None
+        
+        for i, attempt_url in enumerate(gradual_urls):
+            self.logger.info(f"Gradual approach - step {i+1}: {attempt_url}")
+            
+            # Add longer delays for gradual approach
+            if i > 0:
+                self.logger.info("Waiting between gradual steps...")
+                import random
+                wait_time = random.uniform(5.0, 15.0)
+                time.sleep(wait_time)
+            
             page = self._make_request(attempt_url)
             
             if page:
-                # Update the base URL to the successful one for pagination
-                self.base_url = attempt_url
-                urls_to_visit = [attempt_url]
-                primary_success = True
                 self.logger.info(f"Successfully connected to: {attempt_url}")
-                break
+                if attempt_url in [self.base_url] + self.fallback_urls:
+                    # This is a target URL we can scrape from
+                    self.base_url = attempt_url
+                    urls_to_visit = [attempt_url]
+                    primary_success = True
+                    working_url = attempt_url
+                    break
+                else:
+                    # This was just a stepping stone, continue to target
+                    working_url = attempt_url
+                    continue
             else:
                 self.logger.warning(f"Failed to connect to: {attempt_url}")
+                # If we can't even reach the homepage, the blocking is severe
+                if attempt_url == "https://www.garagegrowngear.com":
+                    self.logger.error("Cannot reach homepage - severe blocking detected")
         
         if not primary_success:
-            self.logger.error("All URLs failed - unable to scrape any content")
+            self.logger.error("All gradual approach attempts failed - unable to scrape any content")
             return all_products
         
         while urls_to_visit:
