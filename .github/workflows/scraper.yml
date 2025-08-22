@@ -1,0 +1,266 @@
+name: Garage Grown Gear Scraper
+
+on:
+  schedule:
+    # Run every 6 hours at minutes 0 (00:00, 06:00, 12:00, 18:00 UTC)
+    - cron: '0 */6 * * *'
+  workflow_dispatch:  # Allow manual triggering
+    inputs:
+      debug_mode:
+        description: 'Enable debug logging'
+        required: false
+        default: 'false'
+        type: boolean
+      retry_count:
+        description: 'Number of retry attempts'
+        required: false
+        default: '3'
+        type: string
+
+env:
+  PYTHON_VERSION: '3.11'
+  MAX_RETRIES: ${{ github.event.inputs.retry_count || '3' }}
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          
+      - name: Install dependencies
+        id: install_deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          
+      - name: Verify installation
+        run: |
+          python --version
+          pip list
+          echo "Installation completed successfully"
+          
+      - name: Set up Google Sheets credentials
+        id: setup_credentials
+        env:
+          GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+        run: |
+          if [ -z "$GOOGLE_SHEETS_CREDENTIALS" ]; then
+            echo "Error: GOOGLE_SHEETS_CREDENTIALS secret is not set"
+            exit 1
+          fi
+          echo "$GOOGLE_SHEETS_CREDENTIALS" | base64 -d > service_account.json
+          echo "Credentials file created successfully"
+          
+      - name: Validate credentials file
+        run: |
+          if [ ! -f service_account.json ]; then
+            echo "Error: Credentials file not found"
+            exit 1
+          fi
+          python -c "import json; json.load(open('service_account.json'))" || {
+            echo "Error: Invalid JSON in credentials file"
+            exit 1
+          }
+          echo "Credentials file validated successfully"
+          
+      - name: Run scraper with retry logic
+        id: run_scraper
+        env:
+          GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          SHEET_NAME: "Garage Grown Gear"
+          DEBUG_MODE: ${{ github.event.inputs.debug_mode || 'false' }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -e
+          
+          # Function to run scraper with error handling
+          run_scraper_attempt() {
+            local attempt=$1
+            echo "Scraper attempt $attempt of $MAX_RETRIES"
+            
+            if python main.py; then
+              echo "Scraper completed successfully on attempt $attempt"
+              return 0
+            else
+              local exit_code=$?
+              echo "Scraper failed on attempt $attempt with exit code $exit_code"
+              return $exit_code
+            fi
+          }
+          
+          # Retry logic
+          for attempt in $(seq 1 $MAX_RETRIES); do
+            if run_scraper_attempt $attempt; then
+              echo "scraper_success=true" >> $GITHUB_OUTPUT
+              exit 0
+            else
+              if [ $attempt -lt $MAX_RETRIES ]; then
+                echo "Waiting 60 seconds before retry..."
+                sleep 60
+              fi
+            fi
+          done
+          
+          echo "scraper_success=false" >> $GITHUB_OUTPUT
+          echo "All $MAX_RETRIES attempts failed"
+          exit 1
+          
+      - name: Generate run summary
+        if: always()
+        run: |
+          echo "## Scraper Run Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run ID**: ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run Number**: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trigger**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Max Retries**: ${{ env.MAX_RETRIES }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Debug Mode**: ${{ github.event.inputs.debug_mode || 'false' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp**: $(date -u)" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f scraper_stats.json ]; then
+            echo "- **Products Scraped**: $(cat scraper_stats.json | jq -r '.products_count // "N/A"')" >> $GITHUB_STEP_SUMMARY
+            echo "- **Pages Processed**: $(cat scraper_stats.json | jq -r '.pages_count // "N/A"')" >> $GITHUB_STEP_SUMMARY
+            echo "- **Execution Time**: $(cat scraper_stats.json | jq -r '.execution_time // "N/A"')" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+      - name: Clean up credentials
+        if: always()
+        run: |
+          rm -f service_account.json
+          echo "Credentials cleaned up"
+          
+      - name: Upload logs and artifacts
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: scraper-artifacts-${{ github.run_number }}
+          path: |
+            *.log
+            logs/
+            scraper_stats.json
+            error_report.json
+          retention-days: 7
+          if-no-files-found: ignore
+          
+      - name: Report failure to monitoring
+        if: failure()
+        run: |
+          echo "Scraper workflow failed. Creating failure report..."
+          cat > failure_report.json << EOF
+          {
+            "workflow": "garage-grown-gear-scraper",
+            "run_id": "${{ github.run_id }}",
+            "run_number": "${{ github.run_number }}",
+            "failure_time": "$(date -u -Iseconds)",
+            "trigger": "${{ github.event_name }}",
+            "max_retries": "${{ env.MAX_RETRIES }}",
+            "repository": "${{ github.repository }}",
+            "ref": "${{ github.ref }}"
+          }
+          EOF
+          
+          # Log failure details
+          echo "::error::Scraper workflow failed after ${{ env.MAX_RETRIES }} attempts"
+          echo "::error::Run ID: ${{ github.run_id }}"
+          echo "::error::Check logs and artifacts for detailed error information" 
+ 
+  # Health check and monitoring job
+  monitor:
+    runs-on: ubuntu-latest
+    needs: scrape
+    if: always()
+    timeout-minutes: 5
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Download artifacts
+        if: always()
+        uses: actions/download-artifact@v3
+        with:
+          name: scraper-artifacts-${{ github.run_number }}
+          path: ./artifacts
+        continue-on-error: true
+        
+      - name: Analyze scraper results
+        id: analyze
+        run: |
+          echo "Analyzing scraper results..."
+          
+          # Check if scraper job succeeded
+          if [ "${{ needs.scrape.result }}" = "success" ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "message=Scraper completed successfully" >> $GITHUB_OUTPUT
+          elif [ "${{ needs.scrape.result }}" = "failure" ]; then
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "message=Scraper failed after all retry attempts" >> $GITHUB_OUTPUT
+          else
+            echo "status=unknown" >> $GITHUB_OUTPUT
+            echo "message=Scraper job status: ${{ needs.scrape.result }}" >> $GITHUB_OUTPUT
+          fi
+          
+          # Check for artifacts and logs
+          if [ -d "./artifacts" ]; then
+            echo "artifacts_found=true" >> $GITHUB_OUTPUT
+            echo "Found artifacts directory"
+            ls -la ./artifacts/ || true
+          else
+            echo "artifacts_found=false" >> $GITHUB_OUTPUT
+            echo "No artifacts found"
+          fi
+          
+      - name: Create monitoring report
+        run: |
+          cat > monitoring_report.json << EOF
+          {
+            "workflow_name": "garage-grown-gear-scraper",
+            "run_id": "${{ github.run_id }}",
+            "run_number": "${{ github.run_number }}",
+            "scraper_status": "${{ needs.scrape.result }}",
+            "analysis_status": "${{ steps.analyze.outputs.status }}",
+            "message": "${{ steps.analyze.outputs.message }}",
+            "artifacts_found": "${{ steps.analyze.outputs.artifacts_found }}",
+            "timestamp": "$(date -u -Iseconds)",
+            "trigger_event": "${{ github.event_name }}",
+            "repository": "${{ github.repository }}",
+            "workflow_url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          }
+          EOF
+          
+          echo "## Monitoring Report" >> $GITHUB_STEP_SUMMARY
+          echo "```json" >> $GITHUB_STEP_SUMMARY
+          cat monitoring_report.json >> $GITHUB_STEP_SUMMARY
+          echo "```" >> $GITHUB_STEP_SUMMARY
+          
+      - name: Upload monitoring report
+        uses: actions/upload-artifact@v3
+        with:
+          name: monitoring-report-${{ github.run_number }}
+          path: monitoring_report.json
+          retention-days: 30
+          
+      - name: Set workflow status
+        run: |
+          if [ "${{ needs.scrape.result }}" = "success" ]; then
+            echo "✅ Workflow completed successfully"
+            exit 0
+          else
+            echo "❌ Workflow completed with issues"
+            echo "::warning::Scraper job result: ${{ needs.scrape.result }}"
+            # Don't fail the monitoring job, just report the status
+            exit 0
+          fi
