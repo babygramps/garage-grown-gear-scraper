@@ -36,7 +36,8 @@ class GarageGrownGearScraper:
     
     def __init__(self, base_url: str = "https://www.garagegrowngear.com/collections/sale-1", 
                  use_stealth: bool = True, max_retries: int = 3, retry_delay: float = 1.0,
-                 enable_performance_monitoring: bool = True, batch_size: int = 50):
+                 enable_performance_monitoring: bool = True, batch_size: int = 50,
+                 fallback_urls: List[str] = None):
         """
         Initialize the scraper with configuration.
         
@@ -47,6 +48,7 @@ class GarageGrownGearScraper:
             retry_delay: Delay between retries in seconds
             enable_performance_monitoring: Whether to enable performance monitoring
             batch_size: Batch size for processing large datasets
+            fallback_urls: Alternative URLs to try if main URL fails
         """
         self.base_url = base_url
         self.use_stealth = use_stealth
@@ -54,16 +56,77 @@ class GarageGrownGearScraper:
         self.retry_delay = retry_delay
         self.logger = logging.getLogger(__name__)
         
+        # Set up fallback URLs
+        self.fallback_urls = fallback_urls or [
+            "https://www.garagegrowngear.com/collections/sale",
+            "https://www.garagegrowngear.com/collections/clearance",
+            "https://www.garagegrowngear.com/collections/all?filter.v.availability=1&filter.v.price.gte=&filter.v.price.lte=&sort_by=best-selling"
+        ]
+        
         # Initialize performance monitoring
         self.performance_monitor = PerformanceMonitor() if enable_performance_monitoring else None
         self.batch_processor = BatchProcessor(batch_size=batch_size)
         
-        # Initialize Scrapling Fetcher with stealth configuration
+        # Initialize Scrapling Fetcher with enhanced stealth configuration
         self.fetcher = Fetcher()
+        
+        # Configure Fetcher with proper settings for Scrapling 0.2.99
+        try:
+            self.fetcher.configure(
+                auto_match=True
+            )
+        except Exception as e:
+            self.logger.warning(f"Could not configure fetcher settings: {e}")
+            # Fallback to basic configuration
+            self.fetcher = Fetcher()
+    
+    def _simulate_human_behavior(self) -> None:
+        """Add small random delays to simulate human browsing behavior."""
+        import random
+        delay = random.uniform(0.5, 2.0)
+        time.sleep(delay)
+    
+    def _establish_session(self) -> bool:
+        """
+        Visit the homepage first to establish a session and look more natural.
+        Returns True if successful, False otherwise.
+        """
+        homepage_url = "https://www.garagegrowngear.com"
+        self.logger.info("Establishing session by visiting homepage first...")
+        
+        try:
+            response = self.fetcher.get(
+                homepage_url,
+                stealthy_headers=self.use_stealth,
+                headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Cache-Control': 'max-age=0',
+                    'DNT': '1'
+                },
+                follow_redirects=True,
+                timeout=30
+            )
+            
+            if response.status == 200:
+                self.logger.info("Successfully established session")
+                # Wait a bit to simulate reading the page
+                import random
+                time.sleep(random.uniform(1.0, 3.0))
+                return True
+            else:
+                self.logger.warning(f"Failed to establish session: HTTP {response.status}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Error establishing session: {str(e)}")
+            return False
         
     def _make_request(self, url: str) -> Optional[Adaptor]:
         """
         Make a request with retry logic, stealth headers, and performance monitoring.
+        Enhanced with better anti-detection measures.
         
         Args:
             url: URL to fetch
@@ -73,9 +136,39 @@ class GarageGrownGearScraper:
         """
         request_id = f"request_{int(time.time() * 1000)}"
         
+        # Enhanced headers to look more like a real browser
+        enhanced_headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
+            'sec-ch-ua': '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"'
+        }
+        
         for attempt in range(self.max_retries):
             try:
                 self.logger.info(f"Fetching URL: {url} (attempt {attempt + 1})")
+                
+                # Add small delay to simulate human behavior
+                if attempt > 0:
+                    self._simulate_human_behavior()
+                
+                # Add referrer to look more natural (simulate coming from Google search)
+                if attempt == 0:
+                    enhanced_headers['Referer'] = 'https://www.google.com/search?q=garage+grown+gear'
+                else:
+                    # On retries, use the site's homepage as referrer
+                    enhanced_headers['Referer'] = 'https://www.garagegrowngear.com/'
                 
                 # Use performance monitoring for request timing
                 if self.performance_monitor:
@@ -83,6 +176,7 @@ class GarageGrownGearScraper:
                         response = self.fetcher.get(
                             url,
                             stealthy_headers=self.use_stealth,
+                            headers=enhanced_headers,
                             follow_redirects=True,
                             timeout=30
                         )
@@ -90,25 +184,43 @@ class GarageGrownGearScraper:
                     response = self.fetcher.get(
                         url,
                         stealthy_headers=self.use_stealth,
+                        headers=enhanced_headers,
                         follow_redirects=True,
                         timeout=30
                     )
                 
+                self.logger.info(f"Response status: {response.status} for {url}")
+                
                 if response.status == 200:
                     self.logger.info(f"Successfully fetched {url}")
                     return response
+                elif response.status == 403:
+                    self.logger.warning(f"Access forbidden (403) for {url} - website may be blocking requests")
+                    # For 403 errors, wait longer before retry
+                    if attempt < self.max_retries - 1:
+                        wait_time = self.retry_delay * (3 ** attempt)  # Longer exponential backoff for 403
+                        self.logger.info(f"403 error - waiting {wait_time} seconds before retry...")
+                        time.sleep(wait_time)
+                elif response.status == 429:
+                    self.logger.warning(f"Rate limited (429) for {url}")
+                    # For rate limiting, wait even longer
+                    if attempt < self.max_retries - 1:
+                        wait_time = 30 + (self.retry_delay * (2 ** attempt))
+                        self.logger.info(f"Rate limited - waiting {wait_time} seconds before retry...")
+                        time.sleep(wait_time)
                 else:
                     self.logger.warning(f"HTTP {response.status} for {url}")
                     
             except Exception as e:
                 self.logger.error(f"Request failed for {url}: {str(e)}")
                 
-                if attempt < self.max_retries - 1:
-                    wait_time = self.retry_delay * (2 ** attempt)  # Exponential backoff
-                    self.logger.info(f"Retrying in {wait_time} seconds...")
-                    time.sleep(wait_time)
-                else:
-                    self.logger.error(f"Max retries exceeded for {url}")
+            # Standard retry logic for other errors
+            if attempt < self.max_retries - 1:
+                wait_time = self.retry_delay * (2 ** attempt)  # Exponential backoff
+                self.logger.info(f"Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+            else:
+                self.logger.error(f"Max retries exceeded for {url}")
                     
         return None
     
@@ -383,6 +495,30 @@ class GarageGrownGearScraper:
         
         self.logger.info(f"Starting scrape of all products from: {self.base_url}")
         
+        # Establish session first by visiting homepage
+        if not self._establish_session():
+            self.logger.warning("Failed to establish session, proceeding anyway...")
+        
+        # Try main URL first, then fallbacks if it fails
+        primary_success = False
+        for attempt_url in [self.base_url] + self.fallback_urls:
+            self.logger.info(f"Attempting to scrape from: {attempt_url}")
+            page = self._make_request(attempt_url)
+            
+            if page:
+                # Update the base URL to the successful one for pagination
+                self.base_url = attempt_url
+                urls_to_visit = [attempt_url]
+                primary_success = True
+                self.logger.info(f"Successfully connected to: {attempt_url}")
+                break
+            else:
+                self.logger.warning(f"Failed to connect to: {attempt_url}")
+        
+        if not primary_success:
+            self.logger.error("All URLs failed - unable to scrape any content")
+            return all_products
+        
         while urls_to_visit:
             current_url = urls_to_visit.pop(0)
             
@@ -411,8 +547,11 @@ class GarageGrownGearScraper:
                     if url not in visited_urls and url not in urls_to_visit:
                         urls_to_visit.append(url)
             
-            # Add a small delay between pages to be respectful
-            time.sleep(1)
+            # Add realistic delay between pages to avoid being detected as a bot
+            import random
+            delay = random.uniform(2.0, 5.0)  # Random delay between 2-5 seconds
+            time.sleep(delay)
+            self.logger.info(f"Waiting {delay:.1f} seconds before next page")
             
             # Safety check to prevent infinite loops
             if len(visited_urls) > 50:  # Reasonable limit for pagination
