@@ -3,6 +3,7 @@ Garage Grown Gear scraper implementation using Scrapling.
 """
 import logging
 import time
+import os
 from typing import Dict, List, Any, Optional
 from urllib.parse import urljoin, urlparse
 import re
@@ -37,7 +38,7 @@ class GarageGrownGearScraper:
     def __init__(self, base_url: str = "https://www.garagegrowngear.com/collections/sale-1", 
                  use_stealth: bool = True, max_retries: int = 3, retry_delay: float = 1.0,
                  enable_performance_monitoring: bool = True, batch_size: int = 50,
-                 fallback_urls: List[str] = None):
+                 fallback_urls: List[str] = None, proxy_list: List[str] = None):
         """
         Initialize the scraper with configuration.
         
@@ -49,6 +50,7 @@ class GarageGrownGearScraper:
             enable_performance_monitoring: Whether to enable performance monitoring
             batch_size: Batch size for processing large datasets
             fallback_urls: Alternative URLs to try if main URL fails
+            proxy_list: List of proxy URLs to rotate through
         """
         self.base_url = base_url
         self.use_stealth = use_stealth
@@ -62,6 +64,10 @@ class GarageGrownGearScraper:
             "https://www.garagegrowngear.com/collections/clearance",
             "https://www.garagegrowngear.com/collections/all?filter.v.availability=1&filter.v.price.gte=&filter.v.price.lte=&sort_by=best-selling"
         ]
+        
+        # Set up proxy rotation
+        self.proxy_list = proxy_list or []
+        self.current_proxy_index = 0
         
         # Initialize performance monitoring
         self.performance_monitor = PerformanceMonitor() if enable_performance_monitoring else None
@@ -111,6 +117,46 @@ class GarageGrownGearScraper:
         self.logger.debug(f"Human behavior simulation: sleeping {final_delay:.2f} seconds")
         time.sleep(final_delay)
     
+    def _get_next_proxy(self) -> Optional[str]:
+        """Get the next proxy from the rotation list."""
+        if not self.proxy_list:
+            return None
+        
+        proxy = self.proxy_list[self.current_proxy_index]
+        self.current_proxy_index = (self.current_proxy_index + 1) % len(self.proxy_list)
+        return proxy
+    
+    def _test_proxy(self, proxy: str) -> bool:
+        """Test if a proxy is working."""
+        try:
+            import requests
+            response = requests.get(
+                "http://httpbin.org/ip", 
+                proxies={"http": proxy, "https": proxy},
+                timeout=10
+            )
+            return response.status_code == 200
+        except Exception as e:
+            self.logger.warning(f"Proxy test failed for {proxy}: {e}")
+            return False
+    
+    def _get_working_proxy(self) -> Optional[str]:
+        """Get a working proxy from the list."""
+        if not self.proxy_list:
+            return None
+        
+        # Try each proxy once
+        for _ in range(len(self.proxy_list)):
+            proxy = self._get_next_proxy()
+            if self._test_proxy(proxy):
+                self.logger.info(f"Using working proxy: {proxy}")
+                return proxy
+            else:
+                self.logger.warning(f"Proxy not working: {proxy}")
+        
+        self.logger.error("No working proxies found")
+        return None
+    
     def _get_rotating_headers(self) -> Dict[str, str]:
         """Generate rotating headers with browser fingerprint variations."""
         import random
@@ -158,6 +204,127 @@ class GarageGrownGearScraper:
             headers.pop('sec-ch-ua', None)
         
         return headers
+    
+    def _github_actions_evasion(self, url: str) -> Optional[Adaptor]:
+        """
+        Special evasion method for GitHub Actions environment.
+        Uses multiple techniques to bypass CI/CD detection.
+        """
+        self.logger.info("Attempting GitHub Actions evasion techniques...")
+        
+        # Try different approaches in sequence
+        approaches = [
+            self._try_curl_approach,
+            self._try_requests_session,
+            self._try_playwright_browser
+        ]
+        
+        for approach in approaches:
+            try:
+                result = approach(url)
+                if result:
+                    self.logger.info(f"GitHub Actions evasion successful with {approach.__name__}")
+                    return result
+            except Exception as e:
+                self.logger.warning(f"Approach {approach.__name__} failed: {e}")
+                continue
+        
+        return None
+    
+    def _try_curl_approach(self, url: str) -> Optional[Adaptor]:
+        """Use curl with sophisticated headers to bypass detection."""
+        try:
+            import subprocess
+            import json
+            
+            # Generate realistic headers
+            headers = self._get_rotating_headers()
+            
+            # Build curl command with maximum stealth
+            curl_cmd = [
+                'curl', '-s', '-L', '--compressed',
+                '--max-time', '60',
+                '--connect-timeout', '30',
+                '--retry', '3',
+                '--retry-delay', '2',
+                '--retry-max-time', '180'
+            ]
+            
+            # Add headers
+            for key, value in headers.items():
+                curl_cmd.extend(['-H', f'{key}: {value}'])
+            
+            # Add proxy if available
+            proxy = self._get_working_proxy()
+            if proxy:
+                curl_cmd.extend(['--proxy', proxy])
+            
+            curl_cmd.append(url)
+            
+            self.logger.info(f"Executing curl with stealth headers for {url}")
+            result = subprocess.run(curl_cmd, capture_output=True, text=True, timeout=90)
+            
+            if result.returncode == 0 and result.stdout:
+                from scrapling.parser import Adaptor
+                adaptor = Adaptor(result.stdout)
+                adaptor.status = 200
+                return adaptor
+            else:
+                self.logger.warning(f"Curl failed: {result.stderr}")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Curl approach error: {e}")
+            return None
+    
+    def _try_requests_session(self, url: str) -> Optional[Adaptor]:
+        """Use requests session with sophisticated configuration."""
+        try:
+            import requests
+            from requests.adapters import HTTPAdapter
+            from urllib3.util.retry import Retry
+            
+            session = requests.Session()
+            
+            # Configure retry strategy
+            retry_strategy = Retry(
+                total=3,
+                backoff_factor=2,
+                status_forcelist=[403, 429, 500, 502, 503, 504],
+                allowed_methods=["HEAD", "GET", "OPTIONS"]
+            )
+            
+            adapter = HTTPAdapter(max_retries=retry_strategy)
+            session.mount("http://", adapter)
+            session.mount("https://", adapter)
+            
+            # Set headers
+            headers = self._get_rotating_headers()
+            session.headers.update(headers)
+            
+            # Add proxy if available
+            proxy = self._get_working_proxy()
+            if proxy:
+                session.proxies = {"http": proxy, "https": proxy}
+            
+            # Make request with realistic timing
+            import random
+            time.sleep(random.uniform(1.0, 3.0))
+            
+            response = session.get(url, timeout=60, allow_redirects=True)
+            
+            if response.status_code == 200:
+                from scrapling.parser import Adaptor
+                adaptor = Adaptor(response.text)
+                adaptor.status = 200
+                return adaptor
+            else:
+                self.logger.warning(f"Requests session failed: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Requests session error: {e}")
+            return None
     
     def _try_playwright_browser(self, url: str) -> Optional[Adaptor]:
         """
@@ -398,11 +565,20 @@ class GarageGrownGearScraper:
             else:
                 self.logger.error(f"Max retries exceeded for {url}")
         
-        # If all HTTP requests failed, try browser automation as last resort
-        self.logger.warning("All HTTP requests failed, attempting browser automation...")
-        browser_response = self._try_playwright_browser(url)
-        if browser_response:
-            return browser_response
+        # If all HTTP requests failed, try GitHub Actions specific evasion
+        self.logger.warning("All HTTP requests failed, attempting GitHub Actions evasion...")
+        
+        # Check if we're running in GitHub Actions
+        if os.getenv('GITHUB_ACTIONS'):
+            self.logger.info("GitHub Actions environment detected, using specialized evasion")
+            github_response = self._github_actions_evasion(url)
+            if github_response:
+                return github_response
+        else:
+            # Regular browser automation for local testing
+            browser_response = self._try_playwright_browser(url)
+            if browser_response:
+                return browser_response
                     
         return None
     

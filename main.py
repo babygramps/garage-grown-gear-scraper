@@ -44,14 +44,44 @@ class ScrapingOrchestrator:
         try:
             self.logger.info("Initializing scraping components...")
             
-            # Initialize scraper with performance monitoring
+            # Check for GitHub Actions specific configuration
+            proxy_list = []
+            github_config_file = "github_actions_config.json"
+            
+            if os.path.exists(github_config_file):
+                try:
+                    import json
+                    with open(github_config_file, 'r') as f:
+                        github_config = json.load(f)
+                    
+                    # Override settings for GitHub Actions
+                    if github_config.get('enhanced_delays'):
+                        self.config.scraper.max_retries = github_config.get('max_retries', 8)
+                        self.config.scraper.retry_delay = github_config.get('base_delay', 10.0)
+                    
+                    self.logger.info("Applied GitHub Actions enhanced configuration")
+                except Exception as e:
+                    self.logger.warning(f"Could not load GitHub Actions config: {e}")
+            
+            # Load proxy list if available
+            proxy_file = "proxy_list.txt"
+            if os.path.exists(proxy_file):
+                try:
+                    with open(proxy_file, 'r') as f:
+                        proxy_list = [line.strip() for line in f if line.strip()]
+                    self.logger.info(f"Loaded {len(proxy_list)} proxies from {proxy_file}")
+                except Exception as e:
+                    self.logger.warning(f"Could not load proxy list: {e}")
+            
+            # Initialize scraper with performance monitoring and proxies
             self.scraper = GarageGrownGearScraper(
                 base_url=self.config.scraper.base_url,
                 use_stealth=self.config.scraper.use_stealth_mode,
                 max_retries=self.config.scraper.max_retries,
                 retry_delay=self.config.scraper.retry_delay,
                 enable_performance_monitoring=True,
-                batch_size=50
+                batch_size=50,
+                proxy_list=proxy_list
             )
             
             # Initialize data processor with quality monitoring

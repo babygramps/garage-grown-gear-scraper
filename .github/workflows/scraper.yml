@@ -74,6 +74,22 @@ jobs:
           }
           echo "Credentials file validated successfully"
           
+      - name: Setup GitHub Actions anti-detection workarounds
+        run: |
+          echo "Setting up enhanced anti-detection for GitHub Actions..."
+          
+          # Install system tools that might help with evasion
+          sudo apt-get update -qq
+          sudo apt-get install -y curl wget
+          
+          # Setup GitHub Actions specific configuration
+          python github_actions_workaround.py
+          
+          # Try to get working proxies (optional, may fail)
+          python free_proxy_setup.py || echo "Proxy setup failed - continuing without proxies"
+          
+          echo "GitHub Actions workaround setup completed"
+          
       - name: Run scraper with retry logic
         id: run_scraper
         env:
