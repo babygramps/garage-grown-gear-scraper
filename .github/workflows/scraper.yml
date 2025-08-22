@@ -144,7 +144,7 @@ jobs:
           
       - name: Upload logs and artifacts
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: scraper-artifacts-${{ github.run_number }}
           path: |
@@ -190,7 +190,7 @@ jobs:
         
       - name: Download artifacts
         if: always()
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: scraper-artifacts-${{ github.run_number }}
           path: ./artifacts
@@ -247,7 +247,7 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
           
       - name: Upload monitoring report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: monitoring-report-${{ github.run_number }}
           path: monitoring_report.json
